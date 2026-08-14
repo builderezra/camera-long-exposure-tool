@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="icon" href="data:,">
+<title>Long exposure — device probe</title>
+<style>
+  :root {
+    --bg: #0b0b0d;
+    --panel: #151519;
+    --line: #26262e;
+    --ink: #f2f2f5;
+    --dim: #9a9aa8;
+    --good: #57d38c;
+    --warn: #e8b552;
+    --bad: #ef6b6b;
+    --accent: #6ea8ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  body {
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+    -webkit-text-size-adjust: 100%;
+  }
+  main { max-width: 44rem; margin: 0 auto; padding: 1.25rem 1rem 4rem; }
+  h1 { font-size: 1.35rem; line-height: 1.25; margin: 0 0 .75rem; letter-spacing: -.01em; }
+  h2 {
+    font-size: .8rem; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--dim); margin: 2rem 0 .5rem; font-weight: 600;
+  }
+  p.intro { color: var(--dim); margin: 0 0 1.25rem; }
+  button {
+    font: inherit; font-weight: 600; color: #08080a; background: var(--ink);
+    border: 0; border-radius: 999px; padding: .85rem 1.4rem; width: 100%;
+    -webkit-appearance: none; cursor: pointer;
+  }
+  button:disabled { opacity: .4; cursor: default; }
+  button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  .btnrow { display: flex; gap: .6rem; margin-top: .75rem; }
+  .btnrow button { width: auto; flex: 1; }
+
+  #status {
+    margin: 1rem 0 0; padding: .7rem .9rem; border: 1px solid var(--line);
+    border-radius: .6rem; background: var(--panel); color: var(--dim);
+    font-variant-numeric: tabular-nums;
+  }
+  #status.busy { color: var(--ink); }
+  #status.err { color: var(--bad); border-color: #4a2020; }
+
+  .rows { border: 1px solid var(--line); border-radius: .6rem; overflow: hidden; }
+  .row {
+    display: flex; gap: .75rem; align-items: baseline; justify-content: space-between;
+    padding: .6rem .9rem; background: var(--panel); border-top: 1px solid var(--line);
+  }
+  .row:first-child { border-top: 0; }
+  .row .k { color: var(--dim); flex: 0 0 auto; }
+  .row .v {
+    text-align: right; font-variant-numeric: tabular-nums;
+    word-break: break-word; min-width: 0;
+  }
+  .v.good { color: var(--good); }
+  .v.warn { color: var(--warn); }
+  .v.bad  { color: var(--bad); }
+  .note { color: var(--dim); font-size: .85rem; margin: .5rem 0 0; }
+
+  .hidden { display: none !important; }
+  .stage { margin-top: 1rem; border-radius: .6rem; overflow: hidden; background: #000; line-height: 0; }
+  video, canvas, img.plate { width: 100%; height: auto; display: block; }
+  video { transform: translateZ(0); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Long exposure — device probe</h1>
+  <p class="intro">
+    Open this <strong>on your phone</strong>, on an https address (a phone cannot use the camera over
+    http). It asks for the camera, measures what the browser will really give us, then shoots a
+    4-second light-trail exposure so you can see the result rather than take my word for it. Nothing
+    is uploaded and nothing is saved.
+  </p>
+
+  <button id="start">Start — allow the camera</button>
+  <p id="status">Waiting.</p>
+
+  <div class="stage hidden" id="stage">
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="plate" class="hidden"></canvas>
+    <img class="plate hidden" id="shot" alt="The 4-second light-trail exposure">
+  </div>
+
+  <div class="btnrow hidden" id="afterShot">
+    <button class="secondary" id="save">Save the shot</button>
+    <button class="secondary" id="again">Run it again</button>
+  </div>
+
+  <h2 id="reportHead" class="hidden">What this device reports</h2>
+  <div class="rows hidden" id="report"></div>
+  <p class="note hidden" id="reportNote"></p>
+</main>
+
+<script>
+'use strict';
+
+/* ---------------------------------------------------------------------------
+   The single point where a camera is acquired.
+
+   Everything downstream of here takes a MediaStream and nothing else, so a test
+   can swap this for canvas.captureStream() and still exercise the browser's own
+   pipeline — real track, real frames, real requestVideoFrameCallback. Only the
+   permission prompt is avoided.
+--------------------------------------------------------------------------- */
+async function acquireStream() {
+  return navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: {
+      // 'ideal', never 'exact': an exact constraint the phone can't meet throws
+      // OverconstrainedError and we learn nothing. Ask, then report what we got.
+      facingMode: { ideal: 'environment' },
+      width:      { ideal: 1920 },
+      height:     { ideal: 1080 },
+      frameRate:  { ideal: 30 }
+    }
+  });
+}
+
+const el = (id) => document.getElementById(id);
+const video   = el('video');
+const plate   = el('plate');
+const shotImg = el('shot');
+const statusP = el('status');
+
+let currentStream = null;   // the one live stream, or null
+let shotBlob = null;        // the finished exposure, for saving
+let shotUrl = null;         // object URL behind shotImg
+let aborted = false;        // set when we background mid-capture
+
+/* Releasing the camera must be total and idempotent. Every exit path calls this
+   — success, error, backgrounding, page teardown. A camera left running is a
+   privacy problem and a battery problem. */
+function releaseStream() {
+  if (currentStream) {
+    for (const track of currentStream.getTracks()) {
+      try { track.stop(); } catch (_) { /* already dead; nothing to do */ }
+    }
+    currentStream = null;
+  }
+  if (video.srcObject) video.srcObject = null;
+}
+
+window.addEventListener('pagehide', releaseStream);
+document.addEventListener('visibilitychange', () => {
+  // Backgrounding kills the stream on iOS. Mark the capture aborted so it keeps
+  // the frames it already has rather than returning a half-black plate.
+  if (document.visibilityState === 'hidden') { aborted = true; releaseStream(); }
+});
+
+function setStatus(text, kind) {
+  statusP.textContent = text;
+  statusP.className = kind || '';
+}
+
+/* --- the report ---------------------------------------------------------- */
+
+function addRow(key, value, grade) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  const k = document.createElement('span'); k.className = 'k'; k.textContent = key;
+  const v = document.createElement('span'); v.className = 'v' + (grade ? ' ' + grade : '');
+  v.textContent = value;
+  row.append(k, v);
+  el('report').append(row);
+}
+
+function showReport() {
+  el('reportHead').classList.remove('hidden');
+  el('report').classList.remove('hidden');
+}
+
+/* --- static capability checks -------------------------------------------- */
+
+/* Does this browser expose real shutter/ISO control? The brief's premise is
+   that it does not on Safari — this is the check that proves it on your device
+   rather than on my say-so. */
+function probeExposureControl() {
+  const supported = navigator.mediaDevices.getSupportedConstraints
+    ? navigator.mediaDevices.getSupportedConstraints()
+    : {};
+  const wanted = ['exposureTime', 'iso', 'exposureMode', 'exposureCompensation',
+                  'whiteBalanceMode', 'focusMode', 'torch', 'zoom'];
+  const present = wanted.filter((name) => supported[name]);
+
+  addRow('ImageCapture API', 'ImageCapture' in window ? 'present' : 'absent',
+         'ImageCapture' in window ? 'good' : 'warn');
+  addRow('Exposure constraints',
+         present.length ? present.join(', ') : 'none of ' + wanted.length,
+         present.length ? 'good' : 'warn');
+  return present;
+}
+
+/* Ask the live track what it can actually do, and — the datum that matters most
+   — try to switch auto-exposure off. AE fighting back as the scene brightens is
+   the single biggest quality risk in the project, so it is worth knowing now
+   whether we can turn it off or whether we have to lock frame weight ourselves. */
+async function probeTrack(track) {
+  const settings = track.getSettings ? track.getSettings() : {};
+  addRow('Resolution we got',
+         (settings.width || '?') + ' × ' + (settings.height || '?'),
+         (settings.width >= 1920 || settings.height >= 1920) ? 'good' : 'warn');
+  addRow('Frame rate offered', settings.frameRate ? settings.frameRate.toFixed(1) + ' fps' : 'not reported');
+  addRow('Camera we got', settings.facingMode || 'not reported',
+         settings.facingMode === 'environment' ? 'good' : 'warn');
+
+  let caps = null;
+  if (typeof track.getCapabilities === 'function') {
+    try { caps = track.getCapabilities(); } catch (_) { caps = null; }
+  }
+  addRow('track.getCapabilities()', caps ? 'supported' : 'not supported',
+         caps ? 'good' : 'warn');
+
+  if (caps && Array.isArray(caps.exposureMode)) {
+    addRow('Exposure modes', caps.exposureMode.join(', '),
+           caps.exposureMode.includes('manual') ? 'good' : 'warn');
+  }
+
+  // The live test: can we pin exposure? Harmless — we release the camera after.
+  let lock = 'not offered';
+  let grade = 'warn';
+  if (caps && Array.isArray(caps.exposureMode) && caps.exposureMode.includes('manual')) {
+    try {
+      await track.applyConstraints({ advanced: [{ exposureMode: 'manual' }] });
+      const now = track.getSettings ? track.getSettings().exposureMode : null;
+      lock = now === 'manual' ? 'accepted' : 'silently ignored';
+      grade = now === 'manual' ? 'good' : 'bad';
+    } catch (err) {
+      lock = 'rejected (' + err.name + ')';
+      grade = 'bad';
+    }
+  }
+  addRow('Can we lock exposure?', lock, grade);
+  return { settings, caps };
+}
+
+/* Phase 2 needs a half-float render target to average hundreds of frames without
+   banding. Extension presence alone is not proof — build the actual RGBA16F
+   framebuffer phase 2 would use and ask the driver if it is complete. */
+function probeWebGL2() {
+  const canvas = document.createElement('canvas');
+  const gl = canvas.getContext('webgl2');
+  if (!gl) { addRow('WebGL2', 'no context', 'bad'); return false; }
+
+  const half = gl.getExtension('EXT_color_buffer_half_float');
+  const full = gl.getExtension('EXT_color_buffer_float');
+  if (!half && !full) {
+    addRow('WebGL2', 'context, but no half-float colour buffer', 'bad');
+    return false;
+  }
+
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 64, 64, 0, gl.RGBA, gl.HALF_FLOAT, null);
+  const fb = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  const complete = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+  gl.deleteFramebuffer(fb);
+  gl.deleteTexture(tex);
+  const lose = gl.getExtension('WEBGL_lose_context');
+  if (lose) lose.loseContext();
+
+  addRow('RGBA16F render target',
+         complete ? 'complete — phase 2 is viable' : 'incomplete',
+         complete ? 'good' : 'bad');
+  return complete;
+}
+
+/* --- frame delivery ------------------------------------------------------ */
+
+const hasRVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+
+/* Count how many *unique* camera frames arrive per second.
+   requestVideoFrameCallback fires once per new frame; rAF would fire at the
+   display's 60/120Hz and triple-count the same picture. mediaTime tells us
+   whether a frame really is new. */
+function measureFrameRate(ms) {
+  return new Promise((resolve) => {
+    let callbacks = 0, unique = 0, lastMediaTime = null;
+    let firstAt = null, lastAt = null;
+
+    const step = (now, meta) => {
+      callbacks++;
+      if (firstAt === null) firstAt = now;
+      lastAt = now;
+      if (meta.mediaTime !== lastMediaTime) { unique++; lastMediaTime = meta.mediaTime; }
+      if (lastAt - firstAt < ms) video.requestVideoFrameCallback(step);
+      else {
+        const secs = (lastAt - firstAt) / 1000;
+        resolve({ callbacks, unique, secs, fps: secs > 0 ? unique / secs : 0 });
+      }
+    };
+    video.requestVideoFrameCallback(step);
+  });
+}
+
+/* Shoot the real thing: a light-trail exposure at whatever resolution we got.
+
+   out = max(out, frame), which is exactly ctx.globalCompositeOperation='lighten'
+   — per-channel max. Max of 8-bit values stays 8-bit, so no error accumulates
+   however many frames go in. This mode is exact in a plain 2D canvas.
+
+   The keep-rate is measured the way the brief asks: the share of frames the
+   camera *offered* that we actually *accumulated*. rVFC's presentedFrames
+   counter increments per frame presented, so a gap between consecutive
+   callbacks is a frame we were too slow to take. Timing drawImage instead would
+   lie — it returns when the command is queued, not when it is drawn. */
+function captureLightTrail(ms, onTick) {
+  return new Promise((resolve) => {
+    const w = video.videoWidth, h = video.videoHeight;
+    plate.width = w; plate.height = h;
+    const ctx = plate.getContext('2d', { willReadFrequently: false });
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalCompositeOperation = 'lighten';   // per-channel max
+
+    video.classList.add('hidden');
+    plate.classList.remove('hidden');
+
+    let accumulated = 0;
+    let firstPresented = null, lastPresented = null;
+    let firstAt = null, lastAt = null;
+
+    const finish = () => {
+      const secs = firstAt === null ? 0 : (lastAt - firstAt) / 1000;
+      // Frames offered after the first callback, vs frames we took after it.
+      const offered = (firstPresented !== null && lastPresented !== null)
+        ? lastPresented - firstPresented : null;
+      const taken = accumulated - 1;
+      const keepRate = (offered && offered > 0) ? Math.min(1, taken / offered) : null;
+      resolve({ accumulated, offered, keepRate, secs, width: w, height: h, aborted });
+    };
+
+    const step = (now, meta) => {
+      if (aborted || !currentStream) { finish(); return; }   // keep what we have
+
+      ctx.drawImage(video, 0, 0, w, h);
+      accumulated++;
+      if (firstAt === null) firstAt = now;
+      lastAt = now;
+
+      if (typeof meta.presentedFrames === 'number') {
+        if (firstPresented === null) firstPresented = meta.presentedFrames;
+        lastPresented = meta.presentedFrames;
+      }
+
+      if (onTick) onTick(Math.min(1, (lastAt - firstAt) / ms));
+      if (lastAt - firstAt < ms) video.requestVideoFrameCallback(step);
+      else finish();
+    };
+
+    video.requestVideoFrameCallback(step);
+  });
+}
+
+/* --- saving -------------------------------------------------------------- */
+
+/* A plain <a download> is unreliable on iOS. The share sheet works; long-pressing
+   a real <img> is the fallback, which is why the result is shown as an <img>
+   rather than left in the canvas. */
+async function saveShot() {
+  if (!shotBlob) return;
+  const file = new File([shotBlob], 'light-trail-probe.png', { type: 'image/png' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file] });
+      return;
+    } catch (err) {
+      if (err.name === 'AbortError') return;   // user dismissed; not a failure
+    }
+  }
+  setStatus('No share sheet here — long-press the image above and choose Save Image.');
+}
+
+/* --- the run ------------------------------------------------------------- */
+
+async function run() {
+  el('start').disabled = true;
+  el('afterShot').classList.add('hidden');
+  el('report').innerHTML = '';
+  el('reportNote').classList.add('hidden');
+  aborted = false;
+  shotBlob = null;
+  if (shotUrl) { URL.revokeObjectURL(shotUrl); shotUrl = null; }
+  shotImg.classList.add('hidden');
+  plate.classList.add('hidden');
+  video.classList.remove('hidden');
+
+  addRow('Secure context', window.isSecureContext ? 'yes' : 'no — getUserMedia will refuse',
+         window.isSecureContext ? 'good' : 'bad');
+  addRow('requestVideoFrameCallback', hasRVFC ? 'present' : 'absent — cannot count frames honestly',
+         hasRVFC ? 'good' : 'bad');
+  probeExposureControl();
+  probeWebGL2();
+  showReport();
+
+  try {
+    setStatus('Asking for the camera…', 'busy');
+    currentStream = await acquireStream();
+  } catch (err) {
+    addRow('getUserMedia', err.name, 'bad');
+    setStatus('The camera was refused: ' + err.name + ' — ' + err.message, 'err');
+    releaseStream();
+    el('start').disabled = false;
+    return;
+  }
+
+  try {
+    video.srcObject = currentStream;
+    video.setAttribute('playsinline', '');   // iOS will not autoplay inline without it
+    video.muted = true;
+    el('stage').classList.remove('hidden');
+    await video.play();
+
+    const track = currentStream.getVideoTracks()[0];
+    await probeTrack(track);
+
+    if (!hasRVFC) {
+      setStatus('This browser has no requestVideoFrameCallback, so frame counts ' +
+                'would be guesses. Stopping here.', 'err');
+      releaseStream();
+      el('start').disabled = false;
+      return;
+    }
+
+    setStatus('Counting how many unique frames the camera really delivers…', 'busy');
+    const rate = await measureFrameRate(3000);
+    addRow('Unique frames/sec', rate.fps.toFixed(1) + ' fps',
+           rate.fps >= 24 ? 'good' : 'warn');
+    if (rate.callbacks !== rate.unique) {
+      addRow('Repeated frames', (rate.callbacks - rate.unique) + ' of ' + rate.callbacks, 'warn');
+    }
+
+    setStatus('Shooting a 4-second light-trail exposure — hold still…', 'busy');
+    const shot = await captureLightTrail(4000, (p) => {
+      setStatus('Shooting… ' + Math.round(p * 100) + '%', 'busy');
+    });
+
+    addRow('Frames accumulated', String(shot.accumulated));
+    if (shot.keepRate !== null) {
+      const pct = (shot.keepRate * 100).toFixed(1) + '%';
+      addRow('Frames kept at ' + shot.width + '×' + shot.height, pct,
+             shot.keepRate >= 0.9 ? 'good' : shot.keepRate >= 0.75 ? 'warn' : 'bad');
+    } else {
+      addRow('Frames kept', 'presentedFrames not reported — cannot measure', 'warn');
+    }
+    addRow('Exposure length', shot.secs.toFixed(1) + ' s' + (shot.aborted ? ' (cut short)' : ''),
+           shot.aborted ? 'warn' : 'good');
+
+    el('reportNote').textContent =
+      'Frames kept is the share of the frames the camera offered that actually went into the ' +
+      'plate — the number that decides whether this phone can hold a long exposure at this ' +
+      'resolution. It is measured from the real capture, not a microbenchmark: timing drawImage ' +
+      'would lie in both directions, because it returns when the command is queued rather than drawn.';
+    el('reportNote').classList.remove('hidden');
+
+    // Hand the plate over as an <img> so long-press offers Save Image.
+    shotBlob = await new Promise((res) => plate.toBlob(res, 'image/png'));
+    if (shotBlob) {
+      shotUrl = URL.createObjectURL(shotBlob);
+      shotImg.src = shotUrl;
+      shotImg.classList.remove('hidden');
+      plate.classList.add('hidden');
+    }
+
+    setStatus(shot.aborted
+      ? 'Backgrounded mid-shot — this is the exposure as far as it got, which is the point: ' +
+        'the frames already accumulated are kept.'
+      : 'Done. That is a real 4-second light-trail exposure from your camera.');
+    el('afterShot').classList.remove('hidden');
+
+  } catch (err) {
+    setStatus('Failed: ' + (err && err.name ? err.name + ' — ' : '') + (err && err.message || err), 'err');
+  } finally {
+    releaseStream();                 // total, idempotent, on every path
+    el('start').disabled = false;
+  }
+}
+
+el('start').addEventListener('click', run);   // camera needs a real user gesture
+el('save').addEventListener('click', saveShot);
+el('again').addEventListener('click', run);
+</script>
+</body>
+</html>
