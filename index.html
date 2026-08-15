@@ -3,19 +3,86 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000000">
 <link rel="icon" href="data:,">
+<link rel="stylesheet" href="app.css">
 <title>Long exposure</title>
-<meta http-equiv="refresh" content="0; url=camera-probe.html">
-<style>
-  body {
-    margin: 0; min-height: 100vh; display: grid; place-items: center;
-    background: #0b0b0d; color: #f2f2f5;
-    font: 16px/1.5 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  }
-  a { color: #6ea8ff; }
-</style>
 </head>
 <body>
-  <p>Going to the <a href="camera-probe.html">device probe</a>…</p>
+
+<!-- The viewfinder. During a capture the plate sits on top of the video, so the
+     preview becomes the exposure as it builds. -->
+<div class="stage" id="stage">
+  <video id="video" playsinline muted autoplay></video>
+  <!-- the accumulator's own canvas is inserted here while a capture runs -->
+  <img id="result" alt="The finished exposure" hidden>
+</div>
+
+<!-- Before the camera is running -->
+<section class="panel gate" id="gate">
+  <h1>Long exposure</h1>
+  <p>Point it at traffic after dark and watch the headlights draw themselves.</p>
+  <p class="warn" id="gateWarn" hidden></p>
+  <button class="primary" id="begin">Start the camera</button>
+  <p class="footnote"><a href="camera-probe.html">Device probe</a></p>
+</section>
+
+<!-- Composing and shooting -->
+<section class="panel shoot" id="shoot" hidden>
+  <p class="warn" id="warn" hidden></p>
+
+  <div class="modes" role="group" aria-label="Capture mode">
+    <button class="mode is-on" data-mode="light-trail" aria-pressed="true">Light&nbsp;Trail</button>
+    <button class="mode" data-mode="motion-blur" disabled>Motion&nbsp;Blur</button>
+    <button class="mode" data-mode="low-light" disabled>Low&nbsp;Light</button>
+  </div>
+
+  <div class="dial" id="dialRow">
+    <label for="duration">Duration</label>
+    <output id="durationOut" for="duration">8s</output>
+  </div>
+  <input type="range" id="duration" min="1" max="60" step="1" value="8"
+         aria-label="Exposure duration in seconds">
+
+  <p class="hint" id="hint">Prop the phone against something. Hand-held, a long exposure smears.</p>
+
+  <div class="shutterRow">
+    <button class="shutter" id="shutter" aria-label="Start the exposure">
+      <svg class="ring" viewBox="0 0 100 100" aria-hidden="true">
+        <circle class="ring-track" cx="50" cy="50" r="45"></circle>
+        <circle class="ring-fill" id="ringFill" cx="50" cy="50" r="45"></circle>
+      </svg>
+      <span class="dot" id="shutterDot"></span>
+    </button>
+  </div>
+  <p class="readout" id="readout">&nbsp;</p>
+</section>
+
+<!-- Looking at what you got -->
+<section class="panel review" id="review" hidden>
+  <div class="slider">
+    <label for="brightness">Brightness</label>
+    <output id="brightnessOut">100%</output>
+  </div>
+  <input type="range" id="brightness" min="20" max="300" step="5" value="100"
+         aria-label="Brightness">
+
+  <div class="slider">
+    <label for="contrast">Contrast</label>
+    <output id="contrastOut">100%</output>
+  </div>
+  <input type="range" id="contrast" min="20" max="300" step="5" value="100"
+         aria-label="Contrast">
+
+  <p class="readout" id="reviewNote">&nbsp;</p>
+  <div class="row">
+    <button class="secondary" id="retake">Retake</button>
+    <button class="primary" id="save">Save</button>
+  </div>
+</section>
+
+<script type="module" src="app.js"></script>
 </body>
 </html>

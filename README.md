@@ -3,20 +3,57 @@
 A long-exposure camera that runs as a web page, for use on a phone. Plain HTML/CSS/JS — no build
 step, no framework, no dependencies at runtime.
 
-**Phase 0 is what exists so far: the device probe.** Nothing else is built yet, on purpose — the
-probe's numbers decide some of the design of phase 1.
+**Phases 0 and 1 exist: the device probe, and Light Trail.** Motion Blur and Low Light are not built
+yet — they need a half-float accumulator, and phase 1 is the one that answers "is this cool".
 
-## Running the probe on your phone
+| file | what it is |
+|---|---|
+| `index.html` + `app.css` + `app.js` | the camera |
+| `accumulator.js` | frames in, exposure out — the one piece phase 2 replaces |
+| `camera-probe.html` | the phase 0 device probe, standalone |
+
+## Getting it on your phone
 
 `getUserMedia` is refused over `http://`, so the page has to be served over HTTPS. GitHub Pages is
 the easy route:
 
 1. In this repo, **Settings → Pages → Build and deployment → Source: Deploy from a branch**, pick the
    branch and `/ (root)`.
-2. Wait for the deploy, then open the Pages URL on your phone. The root redirects to the probe.
+2. Wait for the deploy, then open the Pages URL on your phone, and **Share → Add to Home Screen**.
+
+The probe is at `/camera-probe.html`, linked from the bottom of the opening screen.
 
 For desktop work, `localhost` counts as a secure context: `npm run serve`, then
-<http://localhost:8080>.
+<http://localhost:8080>. A webcam is a useless stand-in for a rear phone camera at night, though —
+the real judgements happen outdoors, after dark.
+
+## Phase 1 — Light Trail
+
+`out = max(out, frame)`, per channel, which is what `globalCompositeOperation = 'lighten'` does. The
+max of 8-bit values is itself 8-bit, so this is *exact* in a plain 2D canvas — no error accumulates
+however many frames go in, and there is nothing to resolve at the end. It is both the cheapest mode
+and the most striking one, which is why it goes first.
+
+- Full-screen viewfinder. Tap the shutter and **the preview becomes the exposure as it builds** —
+  the accumulator's canvas is what you are looking at, not a copy of it.
+- Duration 1–60s, or tap again to stop early, which is how you actually judge a long exposure.
+- Review screen: the whole plate, brightness and contrast, retake, save.
+- A screen wake lock holds the display on, since a 60-second exposure outlasts most screen timeouts.
+- The camera is released the moment the exposure ends, so it is not running while you review.
+
+Not in phase 1, on purpose: **Light Sensitivity** is the per-frame weight, and a weight means
+nothing to a `max` — it would just cap the ceiling rather than expose less. It belongs with the
+averaging modes in phase 2, along with ISO.
+
+### The thing most likely to spoil a shot
+
+Auto-exposure. As trails build the scene reads brighter, and iOS may darken the incoming frames to
+compensate, flattening the result. The app tries to pin `exposureMode: 'manual'` and warns you once
+if it can't. Safari is unlikely to offer it, so expect the warning — and expect to work around it by
+keeping a bright source out of the middle of the frame.
+
+The other one is hand-holding. Every frame lands a few pixels off and the whole scene smears, so the
+app tells you to prop the phone. Frame alignment is phase 4 and only if you ask.
 
 ## What the probe reports
 
@@ -37,22 +74,28 @@ For desktop work, `localhost` counts as a secure context: `npm run serve`, then
 Then it shoots a real 4-second light-trail exposure and puts it on screen. Nothing is uploaded and
 nothing is saved unless you tap save.
 
-## The test
+## The tests
 
 ```
 npm install
 npm test
 ```
 
-The camera is acquired in exactly one place — `acquireStream()` in `camera-probe.html` — which
-returns a `MediaStream` and nothing else. The test replaces that one function with
-`canvas.captureStream()`, so the track, the frames and `requestVideoFrameCallback` are all the
-browser's own and only the permission prompt is avoided.
+The camera is acquired in exactly one place per page, in a function that returns a `MediaStream` and
+nothing else. The tests replace that one function with `canvas.captureStream()`, so the track, the
+frames and `requestVideoFrameCallback` are all the browser's own and only the permission prompt is
+avoided.
 
-The input is a white dot crossing black. Light Trail is `out = max(out, frame)`, so every pixel the
+The input is a white dot crossing black, once, slowly. Because Light Trail is `max`, every pixel the
 dot touched ends at full brightness and *stays* there — the pixel lit first is exactly as bright as
 the pixel lit last. Under an average, a pixel lit for one frame in ~120 would come out at about
-2/255. That gap is the assertion.
+2/255. That gap is the assertion, and it also covers stopping early and being backgrounded mid-shot:
+both must keep the frames already accumulated rather than returning a half-black plate.
+
+The dot has to move less than its own diameter per frame or the trail comes out beaded. That is not
+a testing artefact — it is the real gap-between-frames effect, since ~30 samples/sec is not
+continuous light. A fast enough light really will bead. Traffic and water are slow enough that it
+doesn't show.
 
 ## Why frames are accumulated at all
 
@@ -73,9 +116,13 @@ every phone app in this category does. Three consequences worth knowing:
 | phase | what ships |
 |---|---|
 | 0 | **The device probe — done.** |
-| 1 | Light Trail only: viewfinder, live build-up, duration, shutter, result screen, save. 2D canvas, no WebGL |
+| 1 | **Light Trail — done.** |
 | 2 | Motion Blur + Low Light: WebGL2 half-float accumulator, Light Sensitivity, ISO |
 | 3 | Save the build-up as video; freeze-composite |
 | 4 | Hand-held frame alignment |
 
-Phase 1 is the one that answers "is this cool".
+Averaging hundreds of frames in 8 bits quantises every sample to 1/255 and the error compounds into
+visible banding, so phase 2 needs a half-float render target — WebGL2 with
+`EXT_color_buffer_half_float`, ping-ponged between two textures. The probe already checks that a
+complete `RGBA16F` framebuffer can be built. It goes behind the same interface `accumulator.js`
+defines, so nothing outside that file should need to change.

@@ -2,9 +2,9 @@
   "name": "camera-long-exposure-tool",
   "version": "0.0.0",
   "private": true,
-  "description": "A long-exposure camera that runs as a web page. Phase 0: the device probe.",
+  "description": "A long-exposure camera that runs as a web page. Phase 1: Light Trail.",
   "scripts": {
-    "test": "node test/light-trail.test.mjs",
+    "test": "node test/app.test.mjs && node test/probe.test.mjs",
     "serve": "npx --yes http-server . -p 8080 -c-1"
   },
   "devDependencies": {

@@ -1,0 +1,218 @@
+:root {
+  --ink: #f4f4f7;
+  --dim: #9c9caa;
+  --line: #2a2a33;
+  --panel: rgba(12, 12, 15, .82);
+  --accent: #ffd166;
+  --warn: #e8b552;
+  --bad: #ef6b6b;
+  --pad-b: env(safe-area-inset-bottom, 0px);
+  --pad-t: env(safe-area-inset-top, 0px);
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  color: var(--ink);
+  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+
+body {
+  /* 100dvh follows Safari's shrinking toolbar; the vh is the fallback. */
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* --- viewfinder ---------------------------------------------------------- */
+
+.stage {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  display: grid;
+  place-items: center;
+}
+
+.stage > * {
+  grid-area: 1 / 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;      /* fill the screen while composing */
+  display: block;
+}
+
+/* The finished plate is shown whole — cropping the thing you just shot would
+   hide half of it. */
+.stage > #result { object-fit: contain; }
+
+[hidden] { display: none !important; }
+
+/* --- panels -------------------------------------------------------------- */
+
+.panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 1rem 1.15rem calc(1rem + var(--pad-b));
+  background: linear-gradient(to top, rgba(0, 0, 0, .92) 55%, rgba(0, 0, 0, 0));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.gate {
+  top: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+  gap: .5rem;
+  background: #000;
+  padding: 2rem 1.5rem;
+}
+.gate h1 { font-size: 1.6rem; margin: 0; letter-spacing: -.02em; }
+.gate p { color: var(--dim); margin: 0 0 1rem; max-width: 22rem; }
+.gate .primary { width: min(20rem, 100%); }
+.footnote { margin: 1.5rem 0 0 !important; font-size: .85rem; }
+.footnote a { color: var(--dim); }
+
+/* --- controls ------------------------------------------------------------ */
+
+button {
+  font: inherit;
+  font-weight: 600;
+  border: 0;
+  border-radius: 999px;
+  padding: .8rem 1.2rem;
+  cursor: pointer;
+  -webkit-appearance: none;
+  color: var(--ink);
+  background: rgba(255, 255, 255, .12);
+}
+button.primary { background: var(--ink); color: #08080a; }
+button.secondary { background: transparent; border: 1px solid var(--line); }
+button:disabled { opacity: .35; cursor: default; }
+
+.row { display: flex; gap: .6rem; margin-top: .8rem; }
+.row button { flex: 1; }
+
+.modes {
+  display: flex;
+  gap: .25rem;
+  padding: .25rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .08);
+  margin-bottom: 1rem;
+}
+.mode {
+  flex: 1;
+  padding: .5rem .4rem;
+  font-size: .82rem;
+  font-weight: 600;
+  background: transparent;
+  color: var(--dim);
+}
+.mode.is-on { background: rgba(255, 255, 255, .16); color: var(--ink); }
+
+.dial, .slider {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: .82rem;
+  color: var(--dim);
+  margin-bottom: .1rem;
+}
+.dial output, .slider output {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.slider { margin-top: .9rem; }
+
+input[type=range] {
+  width: 100%;
+  margin: 0 0 .25rem;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+input[type=range]::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, .25);
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 26px;
+  height: 26px;
+  margin-top: -11.5px;
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, .5);
+}
+input[type=range]::-moz-range-track { height: 3px; border-radius: 2px; background: rgba(255,255,255,.25); }
+input[type=range]::-moz-range-thumb { width: 26px; height: 26px; border: 0; border-radius: 50%; background: var(--ink); }
+input[type=range]:disabled { opacity: .4; }
+
+.hint, .readout, .warn {
+  font-size: .8rem;
+  color: var(--dim);
+  margin: .5rem 0 0;
+  text-align: center;
+  min-height: 1.2em;
+}
+.warn {
+  color: var(--warn);
+  text-align: left;
+  border: 1px solid rgba(232, 181, 82, .35);
+  border-radius: .5rem;
+  padding: .5rem .7rem;
+  margin: 0 0 .9rem;
+}
+.warn.bad { color: var(--bad); border-color: rgba(239, 107, 107, .4); }
+
+/* --- shutter ------------------------------------------------------------- */
+
+.shutterRow { display: grid; place-items: center; margin-top: 1rem; }
+
+.shutter {
+  position: relative;
+  width: 84px;
+  height: 84px;
+  padding: 0;
+  border-radius: 50%;
+  background: transparent;
+  display: grid;
+  place-items: center;
+}
+.shutter .ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.ring-track, .ring-fill { fill: none; stroke-width: 4; }
+.ring-track { stroke: rgba(255, 255, 255, .3); }
+.ring-fill {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-dasharray: 283;          /* 2πr, r = 45 */
+  stroke-dashoffset: 283;
+}
+
+.shutter .dot {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--ink);
+  transition: border-radius .18s ease, width .18s ease, height .18s ease, background .18s ease;
+}
+.shutter.is-running .dot {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  background: var(--bad);
+}
