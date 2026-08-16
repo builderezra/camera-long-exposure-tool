@@ -122,6 +122,22 @@ button:disabled { opacity: .35; cursor: default; }
 }
 .mode.is-on { background: rgba(255, 255, 255, .16); color: var(--ink); }
 
+.timers {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  margin-bottom: .9rem;
+}
+.timers-label { font-size: .82rem; color: var(--dim); margin-right: auto; }
+.timer {
+  padding: .35rem .8rem;
+  font-size: .82rem;
+  min-width: 3.2rem;
+  background: rgba(255, 255, 255, .08);
+  color: var(--dim);
+}
+.timer.is-on { background: rgba(255, 255, 255, .18); color: var(--ink); }
+
 .dial, .slider {
   display: flex;
   justify-content: space-between;
@@ -179,6 +195,23 @@ input[type=range]:disabled { opacity: .4; }
 }
 .warn.bad { color: var(--bad); border-color: rgba(239, 107, 107, .4); }
 
+/* --- countdown ----------------------------------------------------------- */
+
+.countdown {
+  place-self: center;
+  width: auto !important;
+  height: auto !important;
+  font-size: clamp(5rem, 34vw, 12rem);
+  font-weight: 200;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 2px 40px rgba(0, 0, 0, .8);
+  pointer-events: none;
+  /* Sit above the viewfinder but clear of the controls in the bottom third. */
+  margin-bottom: 22vh;
+}
+
 /* --- shutter ------------------------------------------------------------- */
 
 .shutterRow { display: grid; place-items: center; margin-top: 1rem; }
@@ -215,4 +248,13 @@ input[type=range]:disabled { opacity: .4; }
   height: 30px;
   border-radius: 7px;
   background: var(--bad);
+}
+
+/* Waiting on the self-timer: tapping cancels, so it reads as a stop shape too,
+   in the amber of the countdown rather than the red of a running exposure. */
+.shutter.is-waiting .dot {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  background: var(--accent);
 }

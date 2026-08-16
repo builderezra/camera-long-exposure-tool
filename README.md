@@ -37,6 +37,11 @@ and the most striking one, which is why it goes first.
 - Full-screen viewfinder. Tap the shutter and **the preview becomes the exposure as it builds** —
   the accumulator's canvas is what you are looking at, not a copy of it.
 - Duration 1–60s, or tap again to stop early, which is how you actually judge a long exposure.
+- **Self-timer, off / 3s / 10s.** Tapping the shutter is the moment you are most likely to nudge the
+  phone, and on a light trail that wobble smears every trail already drawn. The timer buys the
+  seconds it takes for the phone to settle after your finger leaves it. The ring drains while it
+  waits and fills while it exposes; tapping again cancels. The countdown is not part of the
+  exposure — a 3s timer with an 8s duration still exposes for 8s.
 - Review screen: the whole plate, brightness and contrast, retake, save.
 - A screen wake lock holds the display on, since a 60-second exposure outlasts most screen timeouts.
 - The camera is released the moment the exposure ends, so it is not running while you review.

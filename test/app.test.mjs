@@ -91,6 +91,69 @@ try {
     await page.close();
   }
 
+  /* --- the self-timer ----------------------------------------------------- */
+  r.group('Self-timer');
+  {
+    const page = await openApp(2);
+    await page.click('.timer[data-delay="3"]');
+    await page.click('#shutter');
+    await page.waitForSelector('#countdown:not([hidden])', { timeout: 5000 });
+
+    const startedAt = Date.now();
+    const firstNumber = (await page.textContent('#countdown')).trim();
+    const readoutDuring = (await page.textContent('#readout')).trim();
+    const liveDuring = await page.evaluate(() => {
+      const v = document.getElementById('video');
+      return v.srcObject ? v.srcObject.getTracks().filter((t) => t.readyState === 'live').length : 0;
+    });
+
+    r.check('it counts down from the delay chosen', firstNumber === '3', `showed "${firstNumber}"`);
+    r.check('nothing is being exposed yet', readoutDuring === '', `readout was "${readoutDuring}"`);
+    r.check('the viewfinder stays live while waiting', liveDuring === 1, `${liveDuring} live tracks`);
+
+    await page.waitForFunction(() => document.getElementById('countdown').textContent === '1',
+                               { timeout: 5000 });
+    await page.waitForSelector('#review:not([hidden])', { timeout: 20000 });
+    const wall = (Date.now() - startedAt) / 1000;
+    const shot = await page.evaluate(() => window.__lastShot);
+
+    r.check('the countdown ran before the exposure, not during it',
+            wall > 4.4 && wall < 7, `${wall.toFixed(1)}s from tap to result, for a 3s timer + 2s exposure`);
+    r.check('the exposure is the length asked for, not the timer plus it',
+            Math.abs(shot.seconds - 2) < 0.5, `${shot.seconds.toFixed(2)}s exposed`);
+    r.check('no frames were accumulated during the countdown',
+            shot.frames > 40 && shot.frames < 90, `${shot.frames} frames — 2s of ~30fps`);
+    await page.close();
+  }
+
+  r.group('Cancelling the self-timer');
+  {
+    const page = await openApp(2);
+    await page.click('.timer[data-delay="10"]');
+    await page.click('#shutter');
+    await page.waitForSelector('#countdown:not([hidden])', { timeout: 5000 });
+    await page.click('#shutter');
+    await page.waitForSelector('#countdown', { state: 'hidden', timeout: 5000 });
+
+    const state = await page.evaluate(() => ({
+      review: !document.getElementById('review').hidden,
+      shoot: !document.getElementById('shoot').hidden,
+      shutterWaiting: document.getElementById('shutter').classList.contains('is-waiting'),
+      durationLocked: document.getElementById('duration').disabled
+    }));
+    r.check('it does not fall through into an exposure', state.review === false);
+    r.check('it goes back to composing', state.shoot && !state.shutterWaiting);
+    r.check('the controls are usable again', state.durationLocked === false);
+
+    // And the shutter still works afterwards.
+    await page.click('.timer[data-delay="0"]');
+    await page.click('#shutter');
+    await page.waitForSelector('#review:not([hidden])', { timeout: 15000 });
+    const shot = await page.evaluate(() => window.__lastShot);
+    r.check('it can still shoot after a cancel', shot.frames > 40, `${shot.frames} frames`);
+    await page.close();
+  }
+
   /* --- backgrounding mid-shot -------------------------------------------- */
   r.group('Backgrounding mid-shot');
   {

@@ -24,6 +24,7 @@ const durationEl = $('duration');
 const durationOut= $('durationOut');
 const hintEl     = $('hint');
 const shutter    = $('shutter');
+const countdownEl= $('countdown');
 const ringFill   = $('ringFill');
 const readout    = $('readout');
 const reviewNote = $('reviewNote');
@@ -33,6 +34,7 @@ const brightOut  = $('brightnessOut');
 const contrastOut= $('contrastOut');
 
 const RING = 283;                    // 2πr for r = 45, matching the SVG
+const HINT = 'Prop the phone against something. Hand-held, a long exposure smears.';
 
 /* ---------------------------------------------------------------------------
    The single point where a camera is acquired.
@@ -57,6 +59,9 @@ window.__setStreamSource = (fn) => { acquireStream = fn; };   // the test seam
 let stream = null;      // the one live stream, or null
 let acc = null;         // the accumulator, holding the plate
 let capturing = false;
+let timerSeconds = 0;   // self-timer delay; 0 is off
+let countingDown = false;
+let countdownRaf = 0;
 let wakeLock = null;
 let shotBlob = null;
 let shotUrl = null;
@@ -177,6 +182,74 @@ async function checkExposureLock() {
               'as trails build. Tap to dismiss.');
 }
 
+/* --- the self-timer ------------------------------------------------------- */
+
+/* Tapping the shutter is the moment you are most likely to nudge the phone, and
+   that wobble lands in the first second of the exposure — where, on a light
+   trail, it smears every trail already drawn. The timer buys you the seconds it
+   takes for the phone to settle after your finger leaves it. */
+function startCountdown() {
+  if (countingDown || capturing || !stream) return;
+
+  const total = timerSeconds * 1000;
+  const t0 = performance.now();
+
+  countingDown = true;
+  shutter.classList.add('is-waiting');
+  shutter.setAttribute('aria-label', 'Cancel the timer');
+  setControlsEnabled(false);
+  warnEl.hidden = true;
+  hintEl.textContent = 'Hands off — let it settle.';
+  readout.textContent = ' ';
+  countdownEl.hidden = false;
+  keepAwake();                       // the countdown counts against the screen timeout too
+
+  const tick = (now) => {
+    if (!countingDown) return;
+    if (!stream) { cancelCountdown(); return; }
+
+    const left = total - (now - t0);
+    if (left <= 0) {
+      clearCountdown();
+      startCapture();
+      return;
+    }
+    countdownEl.textContent = String(Math.ceil(left / 1000));
+    // The ring drains while waiting, then fills while exposing.
+    ringFill.style.strokeDashoffset = String(RING * (1 - left / total));
+    countdownRaf = requestAnimationFrame(tick);
+  };
+
+  countdownEl.textContent = String(timerSeconds);
+  countdownRaf = requestAnimationFrame(tick);
+}
+
+/* Tear the countdown down without touching the rest of the UI — startCapture()
+   is about to set its own state. */
+function clearCountdown() {
+  countingDown = false;
+  cancelAnimationFrame(countdownRaf);
+  countdownRaf = 0;
+  countdownEl.hidden = true;
+  countdownEl.textContent = '';
+  ringFill.style.strokeDashoffset = String(RING);
+}
+
+function cancelCountdown() {
+  clearCountdown();
+  letSleep();
+  shutter.classList.remove('is-waiting');
+  shutter.setAttribute('aria-label', 'Start the exposure');
+  setControlsEnabled(true);
+  hintEl.textContent = HINT;
+  readout.textContent = ' ';
+}
+
+function setControlsEnabled(on) {
+  durationEl.disabled = !on;
+  for (const b of document.querySelectorAll('.timer')) b.disabled = !on;
+}
+
 /* --- the exposure --------------------------------------------------------- */
 
 function startCapture() {
@@ -202,9 +275,10 @@ function startCapture() {
   let firstAt = null, lastAt = null;
 
   capturing = true;
+  shutter.classList.remove('is-waiting');
   shutter.classList.add('is-running');
   shutter.setAttribute('aria-label', 'Stop the exposure');
-  durationEl.disabled = true;
+  setControlsEnabled(false);
   hintEl.textContent = 'Tap again to stop early.';
   warnEl.hidden = true;              // nothing to be done about it mid-shot
   keepAwake();
@@ -246,11 +320,11 @@ function stopCapture() {
 
 function endCapture(elapsedSeconds) {
   letSleep();
-  shutter.classList.remove('is-running');
+  shutter.classList.remove('is-running', 'is-waiting');
   shutter.setAttribute('aria-label', 'Start the exposure');
-  durationEl.disabled = false;
+  setControlsEnabled(true);
   ringFill.style.strokeDashoffset = String(RING);
-  hintEl.textContent = 'Prop the phone against something. Hand-held, a long exposure smears.';
+  hintEl.textContent = HINT;
 
   const frames = acc ? acc.frames : 0;
   releaseCamera();                                  // not needed while reviewing
@@ -366,6 +440,11 @@ document.addEventListener('visibilitychange', () => {
 
   if (capturing) {
     stopCapture();                 // keeps the frames already accumulated
+  } else if (countingDown) {
+    // Nothing has been shot yet, so there is nothing to salvage — and the
+    // stream is gone, so the exposure could not start anyway.
+    cancelCountdown();
+    failToGate('The camera was released while the app was in the background.');
   } else if (!shootPanel.hidden) {
     // Composing, not shooting. The stream is gone and re-acquiring needs a
     // fresh gesture, so hand the user the button rather than a frozen preview.
@@ -379,8 +458,21 @@ durationEl.addEventListener('input', () => {
 
 shutter.addEventListener('click', () => {
   if (capturing) stopCapture();
+  else if (countingDown) cancelCountdown();
+  else if (timerSeconds > 0) startCountdown();
   else startCapture();
 });
+
+for (const button of document.querySelectorAll('.timer')) {
+  button.addEventListener('click', () => {
+    timerSeconds = Number(button.dataset.delay);
+    for (const other of document.querySelectorAll('.timer')) {
+      const on = other === button;
+      other.classList.toggle('is-on', on);
+      other.setAttribute('aria-pressed', String(on));
+    }
+  });
+}
 
 $('begin').addEventListener('click', startCamera);   // camera needs a real gesture
 

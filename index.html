@@ -18,6 +18,7 @@
   <video id="video" playsinline muted autoplay></video>
   <!-- the accumulator's own canvas is inserted here while a capture runs -->
   <img id="result" alt="The finished exposure" hidden>
+  <div class="countdown" id="countdown" role="status" aria-live="assertive" hidden></div>
 </div>
 
 <!-- Before the camera is running -->
@@ -37,6 +38,13 @@
     <button class="mode is-on" data-mode="light-trail" aria-pressed="true">Light&nbsp;Trail</button>
     <button class="mode" data-mode="motion-blur" disabled>Motion&nbsp;Blur</button>
     <button class="mode" data-mode="low-light" disabled>Low&nbsp;Light</button>
+  </div>
+
+  <div class="timers" role="group" aria-label="Self-timer">
+    <span class="timers-label">Timer</span>
+    <button class="timer is-on" data-delay="0" aria-pressed="true">Off</button>
+    <button class="timer" data-delay="3" aria-pressed="false">3s</button>
+    <button class="timer" data-delay="10" aria-pressed="false">10s</button>
   </div>
 
   <div class="dial" id="dialRow">
