@@ -12,10 +12,10 @@ const server = await serve(PORT);
 const browser = await launch();
 
 /** Open the app with a synthetic camera already wired in, ready to shoot. */
-async function openApp(durationSeconds) {
+async function openApp(durationSeconds, query = '') {
   const page = await browser.newPage({ viewport: { width: 430, height: 930 } });
   page.on('pageerror', (e) => console.log('    [page exception]', e.message));
-  await page.goto(`http://localhost:${PORT}/index.html`);
+  await page.goto(`http://localhost:${PORT}/index.html${query}`);
   await page.evaluate(synthCamera, {});
   await page.click('#begin');
   await page.waitForSelector('#shoot:not([hidden])');
@@ -63,6 +63,40 @@ try {
       return v.srcObject ? v.srcObject.getTracks().filter((t) => t.readyState === 'live').length : 0;
     });
     r.check('the camera is released once the exposure ends', live === 0, `${live} live tracks`);
+    r.check('it measured the blend and found a working route',
+            shot.path === 'direct' || shot.path === 'copy', `path: ${shot.path}`);
+    await page.close();
+  }
+
+  /* --- the fallback route -------------------------------------------------
+     A blend mode that is quietly ignored turns every frame into an overwrite,
+     and the exposure comes out as a snapshot of the last thing seen. The
+     accumulator measures rather than trusts, and falls back to blending via an
+     intermediate canvas. That fallback has to produce the same exposure, so it
+     is tested as a first-class route rather than assumed to work. */
+  r.group('The via-copy fallback route');
+  {
+    const page = await openApp(4, '?blend=copy');
+    await page.click('#shutter');
+    await page.waitForSelector('#review:not([hidden])', { timeout: 20000 });
+    await page.waitForFunction(() => {
+      const el = document.getElementById('result');
+      return !el.hidden && el.complete && el.naturalWidth > 0;
+    });
+
+    const t = await page.evaluate(measureTrail, '#result');
+    const shot = await page.evaluate(() => window.__lastShot);
+
+    r.check('the forced route is the one that ran', shot.path === 'copy', `path: ${shot.path}`);
+    r.check('it still takes the max, not the last frame',
+            t.span > t.w * 0.2 && t.gaps === 0, `${t.span}px of continuous trail`);
+    r.check('the trail is at full brightness',
+            t.litMin > 240, `dimmest ${t.litMin.toFixed(1)}/255`);
+    r.check('the pixel lit first is as bright as the pixel lit last',
+            Math.abs(t.earlyLum - t.lateLum) < 8,
+            `${t.earlyLum.toFixed(1)} vs ${t.lateLum.toFixed(1)}`);
+    r.check('it keeps up despite the extra draw per frame',
+            shot.frames > 90, `${shot.frames} frames in ${shot.seconds.toFixed(1)}s`);
     await page.close();
   }
 

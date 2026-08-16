@@ -36,6 +36,10 @@ const contrastOut= $('contrastOut');
 const RING = 283;                    // 2πr for r = 45, matching the SVG
 const HINT = 'Prop the phone against something. Hand-held, a long exposure smears.';
 
+/* ?blend=direct|copy forces the accumulator's route instead of letting it work
+   one out. For checking a suspect device by hand. */
+const blendOverride = new URLSearchParams(location.search).get('blend');
+
 /* ---------------------------------------------------------------------------
    The single point where a camera is acquired.
 
@@ -267,7 +271,7 @@ function startCapture() {
   // The accumulator owns the surface, and that surface *is* the live preview —
   // watching the trails draw themselves is the whole appeal.
   if (acc) acc.canvas.remove();
-  acc = createLightTrailAccumulator(width, height);
+  acc = createLightTrailAccumulator(width, height, { path: blendOverride });
   stage.insertBefore(acc.canvas, result);
 
   const seconds = Number(durationEl.value);
@@ -299,6 +303,22 @@ function startCapture() {
     if (!stream) { finish(); return; }             // backgrounded: keep what we have
 
     acc.addFrame(video);
+
+    // The accumulator measures the blend on the first frame. If neither route
+    // takes the max, every frame is overwriting the last and the "exposure"
+    // would come out as an ordinary snapshot of whatever is in front of the
+    // lens when it ends. Say so rather than hand over a fake.
+    if (acc.frames === 1 && acc.path === 'broken') {
+      capturing = false;
+      endCaptureUI();
+      acc.canvas.remove();
+      acc = null;
+      releaseCamera();
+      failToGate('This browser is ignoring the blend that builds the exposure, so ' +
+                 'every frame would overwrite the last. Light Trail cannot work here.');
+      return;
+    }
+
     if (firstAt === null) firstAt = now;
     lastAt = now;
 
@@ -318,18 +338,27 @@ function stopCapture() {
   if (window.__capture) window.__capture.stop();
 }
 
-function endCapture(elapsedSeconds) {
+/* Put the shooting controls back, without deciding what happens next. */
+function endCaptureUI() {
   letSleep();
   shutter.classList.remove('is-running', 'is-waiting');
   shutter.setAttribute('aria-label', 'Start the exposure');
   setControlsEnabled(true);
   ringFill.style.strokeDashoffset = String(RING);
   hintEl.textContent = HINT;
+}
+
+function endCapture(elapsedSeconds) {
+  endCaptureUI();
 
   const frames = acc ? acc.frames : 0;
+  const path = acc ? acc.path : null;
   releaseCamera();                                  // not needed while reviewing
 
-  window.__lastShot = { frames, seconds: elapsedSeconds, width: acc && acc.width, height: acc && acc.height };
+  window.__lastShot = {
+    frames, path, seconds: elapsedSeconds,
+    width: acc && acc.width, height: acc && acc.height
+  };
 
   if (frames === 0) {
     // Nothing arrived — a black rectangle is not a photograph. Say so instead.
@@ -355,7 +384,8 @@ function endCapture(elapsedSeconds) {
 
   reviewNote.textContent =
     elapsedSeconds.toFixed(1) + 's · ' + frames + ' frames · ' +
-    plateCanvas.width + '×' + plateCanvas.height;
+    plateCanvas.width + '×' + plateCanvas.height +
+    (path === 'copy' ? ' · via copy' : '');       // worth knowing the fallback was needed
   readout.textContent = ' ';
   show(review);
 }

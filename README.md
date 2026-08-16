@@ -50,6 +50,23 @@ Not in phase 1, on purpose: **Light Sensitivity** is the per-frame weight, and a
 nothing to a `max` — it would just cap the ceiling rather than expose less. It belongs with the
 averaging modes in phase 2, along with ISO.
 
+### The blend is measured, not trusted
+
+The whole mode rests on one browser feature working. When a blend mode is quietly ignored, the
+failure is invisible in the code and total in the output: every frame overwrites the last, and a
+60-second exposure comes out as an ordinary snapshot of whatever was in front of the lens at the
+end.
+
+So before each exposure the accumulator fills the plate white and blends one real frame over it.
+`max(255, anything)` is 255, so a working blend leaves it white; any pixel that came back darker is
+the frame having overwritten the white. There is no false failure in that test — white is the
+maximum, nothing can legitimately darken it.
+
+If the direct route fails, it blends via a plain intermediate canvas instead, which is more
+reliably implemented, at the cost of one extra draw per frame. The review screen says `via copy`
+when that happened. If neither route takes the max, the app says so rather than hand over a
+snapshot dressed as an exposure. `?blend=direct` or `?blend=copy` forces a route by hand.
+
 ### The thing most likely to spoil a shot
 
 Auto-exposure. As trails build the scene reads brighter, and iOS may darken the incoming frames to

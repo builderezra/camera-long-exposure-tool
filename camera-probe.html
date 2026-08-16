@@ -277,6 +277,58 @@ function probeWebGL2() {
   return complete;
 }
 
+/* Does `lighten` actually take the per-channel max on this device, with a real
+   video frame as the source?
+
+   Fill a canvas white, then blend a frame over it. max(255, anything) is 255, so
+   a working blend leaves it white everywhere. Anything darker is the frame
+   having overwritten the white — source-over wearing a lighten label, which
+   turns every long exposure into a plain snapshot of the last frame. There is no
+   false failure here: white is the maximum, nothing can legitimately darken it.
+
+   Both routes are checked: drawing the video straight into the blended canvas,
+   and going via a plain intermediate canvas first. */
+function probeLightenBlend() {
+  const w = 64, h = 64;
+  const test = document.createElement('canvas');
+  test.width = w; test.height = h;
+  const ctx = test.getContext('2d');
+  const read = document.createElement('canvas');
+  read.width = 16; read.height = 16;
+  const readCtx = read.getContext('2d', { willReadFrequently: true });
+
+  const stillWhite = (draw) => {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalCompositeOperation = 'lighten';
+    draw();
+    readCtx.drawImage(test, 0, 0, 16, 16);
+    const d = readCtx.getImageData(0, 0, 16, 16).data;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] < 250 || d[i + 1] < 250 || d[i + 2] < 250) return false;
+    }
+    return true;
+  };
+
+  const direct = stillWhite(() => ctx.drawImage(video, 0, 0, w, h));
+
+  const mid = document.createElement('canvas');
+  mid.width = w; mid.height = h;
+  const midCtx = mid.getContext('2d');
+  const viaCopy = stillWhite(() => {
+    midCtx.drawImage(video, 0, 0, w, h);
+    ctx.drawImage(mid, 0, 0);
+  });
+
+  const verdict = direct ? 'yes — drawing the video straight in'
+    : viaCopy ? 'only via an intermediate canvas'
+    : 'NO — every frame would overwrite the last';
+  addRow('Does “lighten” take the max?', verdict,
+         direct ? 'good' : viaCopy ? 'warn' : 'bad');
+  return { direct, viaCopy };
+}
+
 /* --- frame delivery ------------------------------------------------------ */
 
 const hasRVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
@@ -442,6 +494,11 @@ async function run() {
     if (rate.callbacks !== rate.unique) {
       addRow('Repeated frames', (rate.callbacks - rate.unique) + ' of ' + rate.callbacks, 'warn');
     }
+
+    // Only meaningful once frames are certainly flowing — drawing a video that
+    // has no frame yet leaves the white test canvas untouched and would read as
+    // a pass.
+    probeLightenBlend();
 
     setStatus('Shooting a 4-second light-trail exposure — hold still…', 'busy');
     const shot = await captureLightTrail(4000, (p) => {
